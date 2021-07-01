@@ -1,145 +1,156 @@
+#include <mpi.h>
 #include <iostream>
-#include <cmath>
-#include <sys/time.h>
-#include <cstdlib>
+#include <time.h>
+#include <unistd.h>
 
 using namespace std;
 
-void get_A_inf(float*& A, float& A_inf, int& N){
-    float max_line_sum = 0;
-    float temp_sum = 0;
-    for(int i = 0; i < N; ++i){
-        temp_sum = 0;
-        for(int j = 0; j < N; ++j){
-            temp_sum += A[j * N + i];
-        }
-        if(temp_sum > max_line_sum){
-            max_line_sum = temp_sum;
-        }
-    }
-    A_inf = max_line_sum;
-}
-
-void get_A_1(float*& A, float& A_1, int& N){
-    float max_row_sum = 0;
-    float temp_sum = 0;
-    for(int i = 0; i < N; ++i){
-        temp_sum = 0;
-        for(int j = 0; j < N; ++j){
-            temp_sum += A[i * N + j];
-        }
-        if(temp_sum > max_row_sum){
-            max_row_sum = temp_sum;
-        }
-    }
-    A_1 = max_row_sum;
-}
-
-void multiply_matrices(float*& A, float*& B, float*& AB, int& N){
-    for(int i = 0; i < N; ++i){
-        for(int j = 0; j < N; ++j){
-            for(int k = 0; k < N; ++k){
-                AB[i * N + k] += A[i * N + j] * B[j * N + k];
-            }
-        }
-    }
-}
-
-float* get_inverted_matrix(float*& A, int N, int M){
-    float* B = new float [N*N]();
-    float A_inf = 0;
-    float A_1 = 0;
-    float* A_T = new float [N*N]();
-    float* A_inv = new float [N*N]();
-    float* I = new float [N*N]();
-    float* R = new float [N*N]();
-    float* BA = new float [N*N]();
-    float* BUFF = new float [N*N]();
-
-    for(int i = 0; i < N; ++i){
-        for(int j = 0; j < N; ++j){
-            if(i == j){
-                I[i * N + j] = 1;
-                BUFF[i * N + j] = 1;
-                A_T[i * N + j] = A[i * N + j];
-            }
-            if(i < j){
-                A_T[i * N + j] = A[j * N + i];
-                A_T[i * N + j] = A[i * N + j];
-            }
-        }
-    }
-
-    get_A_1(A, A_1, N);
-    get_A_inf(A, A_inf, N);
-
-    for(int i = 0; i < N; ++i){
-        for(int j = 0; j < N; ++j){
-            B[i * N + j] = A[j * N + i] / (A_1 * A_inf);
-        }
-    }
-
-    multiply_matrices(A, B, BA, N);
-
-    for(int i = 0; i < N; ++i){
-        for(int j = 0; j < N; ++j){
-            float temp = I[i * N + j] - BA[i * N + j];
-            R[i * N + j] = temp;
-        }
-    }
-
-    float* TEMP = new float [N*N]();
-
-    for(int k = 0; k < M-1; ++k){
-        std::cout << "Iteration " << k << "." << std::endl;
-        multiply_matrices(I, R, TEMP, N);
-        for(int i = 0; i < N; ++i){
-            for(int j = 0; j < N; j++){
-                I[i * N + j] = TEMP[i * N + j];
-                TEMP[i * N + j] = 0;
-                BUFF[i * N + j] += I[i * N + j];
-            }
-        }
-    }
-    multiply_matrices(BUFF, B, A_inv, N);
-    return A_inv;
-}
-
-int main(int argc, char* argv[]){
-    srand(1337);
-
-    int N = 0; //matrix size
-    int M = 0; //number of iterations
-    if ((argc == 1) || (argc == 2))
-    {
-        cout << "Please enter matrix size and number of iterations" << endl;
-        return 0;
-    }
-    N = stoi(argv[1]);
-    M = stoi(argv[2]);
-
-    float *A = new float[N * N]();
-    int i, j;
+void generate_matrix(double* matrix, int num_rows, int num_cols) {
     double rand_value = 0;
-    for(i = 0; i < N; i++) {
-        for(j = 0; j < N; j++) {
-            if(i > j) {
-                continue;
-            }
+    for(unsigned int i = 0; i < num_rows; i++) {
+        for(unsigned int j = 0; j < num_cols; j++) {
             rand_value = rand() % 10;
-            A[i * N + j] = rand_value;
-            if(i != j) {
-                A[j * N + i] = rand_value;
-            }else{
-                A[i * N + j] += 470;
+            matrix[i * num_cols + j] = rand_value;
+        }
+    }
+}
+
+int main(int argc, char** argv) {
+    srand(3228);
+    MPI_Init(&argc, &argv);
+
+    int world_size = 0;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+    int world_rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+
+    int ndims = 2;
+    double start, end;
+    start = MPI_Wtime();
+    //создание решётки
+    int dims[ndims];
+    dims[0] = 1;
+    dims[1] = 16;
+
+    int periods[2];
+    periods[0] = 0;
+    periods[0] = 0;
+
+    int reorder = 0;
+
+    MPI_Comm table_comm;
+    MPI_Cart_create(MPI_COMM_WORLD, ndims, dims, periods, reorder, &table_comm);
+    //----------------
+    int n1 = 4096;
+    int n2 = 2048;
+    int n3 = 4096;
+    double* A;
+    double* B;
+    double* AB;
+    if(world_rank == 0) {
+        A = (double*)malloc(n1 * n2 * sizeof(double));
+        B = (double*)malloc(n2 * n3 * sizeof(double));
+        AB = (double*)malloc(n1 * n3 * sizeof(double));
+        generate_matrix(A, n1, n2);
+        generate_matrix(B, n2, n3);
+        for(int i = 0; i < n1; i++) {
+            for(int j = 0; j < n3; j++) {
+                AB[i * n3 + j] = 0;
             }
         }
     }
+    //коммуникатор для строк
+    int coords[2];
+    int proc_table_rank = 0;
+    MPI_Comm_rank(table_comm, &proc_table_rank);
+    MPI_Cart_coords(table_comm, proc_table_rank, 2, coords);
+    /*
+     * coords[0] - rows
+     * coords[1] - collumns
+     */
+    MPI_Comm row_comm;
+    MPI_Comm_split(table_comm, coords[1], coords[0], &row_comm);
+    //----------------------
 
-    struct timeval start, end;
-    gettimeofday(&start, NULL);
-    get_inverted_matrix(A, N, M);
-    gettimeofday(&end, NULL);
-    cout << "Time taken: " << ((end.tv_sec - start.tv_sec) + 0.000001 * (end.tv_usec - start.tv_usec)) << endl;
-    return 0;
+    //коммуникатор для столбцов
+    MPI_Comm col_comm;
+    MPI_Comm_split(table_comm, coords[0], coords[1], &col_comm);
+    //-------------------------
+    //разрезание матриц
+    /**
+     * dim[0] - число строк
+     * dim[1] - число столбцов
+     */
+    double A_rows[n1 * n2 / dims[1]];
+    if(coords[0] == 0) { //нулевой столбец
+        MPI_Scatter( A , n1 * n2 / dims[1] , MPI_DOUBLE , A_rows , n1 * n2 / dims[1] , MPI_DOUBLE , 0 , col_comm);
+    }
+    double B_cols[n2 * n3 / dims[0]];
+    if(coords[1] == 0) { //нулевая строка
+        MPI_Datatype b_part_vec;
+        //^изначальный тип для разрезания матрицы В, но проблема в том, что Scatter не будет правильно воспринимать размеры этого типа
+        MPI_Type_vector(n2, n3 / dims[0], n3, MPI_DOUBLE, &b_part_vec);
+        MPI_Type_commit(&b_part_vec);
+
+        MPI_Datatype b_part_for_tricking_scatter;
+        MPI_Type_create_resized(b_part_vec, 0, sizeof(double) * n3 / dims[0], &b_part_for_tricking_scatter);
+        //^меняем размер типа данных, чтобы таким образом "обмануть" Scatter
+        MPI_Type_commit(&b_part_for_tricking_scatter);
+        MPI_Scatter(B, 1, b_part_for_tricking_scatter, B_cols, n2 * n3 / dims[0], MPI_DOUBLE, 0, row_comm);
+        //режем матрицу В, используя созданных "обманны" тип
+
+        //рассылаем матрицы А и В по строкам и колонкам соответственно
+        MPI_Type_free(&b_part_vec);
+        MPI_Type_free(&b_part_for_tricking_scatter);
+    }
+    MPI_Bcast(A_rows, n1 * n2 / dims[1], MPI_DOUBLE, 0, row_comm);
+    MPI_Bcast(B_cols, n2 * n3 / dims[0], MPI_DOUBLE, 0, col_comm);
+    //-----------------
+
+    //умножаем пришедшие на процессор части матриц
+    int A_part_rows = n1 / dims[1];
+    int B_part_cols = n3 / dims[0];
+    double C_part[B_part_cols * A_part_rows];
+
+    for(int row_A = 0; row_A < A_part_rows; row_A++) {
+        for(int col_B = 0; col_B < B_part_cols; col_B++) {
+            C_part[row_A * n2 + col_B] = 0;
+            for(int i = 0; i < n2; i++) {
+                C_part[row_A * n2 + col_B] += A_rows[row_A * n2 + i] * B_cols[col_B * n2 + i];
+            }
+        }
+    }
+    //--------------------------------------------
+
+    MPI_Datatype recieve_block;
+    MPI_Datatype recieve_block_resized;
+    MPI_Type_vector( A_part_rows, B_part_cols, n3 , MPI_DOUBLE , &recieve_block);// тип для минора матрицы С
+    MPI_Type_commit(&recieve_block);
+    MPI_Type_create_resized(recieve_block, 0, sizeof(double) * B_part_cols, &recieve_block_resized);
+    MPI_Type_commit(&recieve_block_resized);
+
+    int displs[world_size];
+    int recvcounts[world_size];
+    if(world_rank == 0) {
+        int displs_coords[2];
+        for(int i = 0; i < world_size; i++) {
+            MPI_Cart_coords(table_comm, i, 2, displs_coords);
+            printf("My cart coords are (%d , %d)", displs_coords[0], displs_coords[1]);
+            displs[i] = n1 / dims[1] * dims[0] * displs_coords[1] + displs_coords[0];
+
+            recvcounts[i] = 1;
+        }
+    }
+    MPI_Datatype send_vec;
+    MPI_Type_contiguous(n1 * n3 / (dims[0] * dims[1]), MPI_DOUBLE, &send_vec);
+    MPI_Type_commit(&send_vec);
+    MPI_Gatherv( C_part , 1 , send_vec , AB , recvcounts , displs , recieve_block_resized , 0, table_comm);
+    end = MPI_Wtime();
+    if(world_rank == 0) {
+        cout << "Time taken: " << end - start << endl;
+    }
+    MPI_Finalize();
+
 }
